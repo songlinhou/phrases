@@ -147,9 +147,9 @@ def find_existing_record(voc):
 
     # Create a cursor object
     cursor = conn.cursor()
-    sql = f"SELECT * FROM {TABLE_NAME} where phases = '{phase}'"
+    sql = f"SELECT * FROM {TABLE_NAME} where phases = ?"
     # Execute the SELECT statement
-    cursor.execute(sql)
+    cursor.execute(sql, (phase, ))
 
     # Fetch all records at once using fetchall()
     all_records = cursor.fetchall()
