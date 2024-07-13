@@ -24,6 +24,7 @@ Clone this repo and use the following command in your terminal (only run it once
 
 ```
 git clone https://github.com/songlinhou/phrases.git
+chmod +x phrases/phrases.py
 sudo cp phrases/phrases.py /usr/local/bin/phrases
 rm -rf phrases
 ```
