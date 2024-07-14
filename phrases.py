@@ -306,6 +306,9 @@ def show_record(idx, record, total_num, from_search = False, default_option_idx 
         options = ['Next', 'Prev', 'Practice', 'Edit', 'Back']
         print()
         choice = get_selection(options,'Operation', default_idx = default_option_idx)
+        if choice is None:
+            return
+        
         DEFAULT_VIEW_OPTION_IDX = options.index(choice)
         if options.index(choice) == 0:
             return idx + 1, None
