@@ -10,7 +10,7 @@ import csv
 import datetime
 import random
 
-VERSION = "0.1"
+VERSION = "0.2"
 DB_NAME = "vocabulary.db"
 TABLE_NAME = "vocabulary"
 KEY = None
