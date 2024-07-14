@@ -17,10 +17,13 @@ KEY = None
 CONFIG_DIR = "phrases_configs"
 DEFAULT_VIEW_OPTION_IDX = 0
 
-__last_updated_note = None
 __in_main_menu = True
 
 example = json.dumps({"explanation":"THE EXPLAINATION GOES HERE", "example sentences":["sentence 1", "sentence 2", "sentence 3"], "translations":["翻译1", "翻译2", "翻译3"]})
+
+config_path = os.path.join(str(Path.home()), CONFIG_DIR)
+os.makedirs(config_path, exist_ok=True)
+DB_NAME = os.path.join(config_path, DB_NAME)
 
 def title():
     _title = f"""
@@ -113,6 +116,8 @@ def get_selection(options, question, default_idx = 0):
     except:
         if not __in_main_menu:
             show_menu()
+        
+            
 
 def init_db():
     # Connect to the database (or create it if it doesn't exist)
@@ -509,9 +514,12 @@ def show_menu(show_title=True):
     clear_console()
     print(success_text(title()))
     read_chatgpt_key()
+    
     DEFAULT_VIEW_OPTION_IDX = 0
     options = ["Lookup", "Vocabulary Book", "General Test", "Export to CSV","Exit"]
     answer = get_selection(options, "What do you want to do?")
+    if answer is None:
+        exit(0)
     idx = options.index(answer)
     if idx == 0:
         voc = get_input(validate=False)
