@@ -10,7 +10,7 @@ import csv
 import datetime
 import random
 
-VERSION = "0.2"
+VERSION = "0.3"
 DB_NAME = "vocabulary.db"
 TABLE_NAME = "vocabulary"
 KEY = None
@@ -18,6 +18,7 @@ CONFIG_DIR = "phrases_configs"
 DEFAULT_VIEW_OPTION_IDX = 0
 
 __last_updated_note = None
+__in_main_menu = True
 
 example = json.dumps({"explanation":"THE EXPLAINATION GOES HERE", "example sentences":["sentence 1", "sentence 2", "sentence 3"], "translations":["翻译1", "翻译2", "翻译3"]})
 
@@ -79,32 +80,39 @@ def validate_non_empty(_, answer):
 
 def get_input(label="Search", validate=True):
     import inquirer
-    if validate is False:
-        questions = [
-        inquirer.Text(label, message=label)
-        ]
-    else:
-        questions = [
-        inquirer.Text(label, message=label, validate=validate_non_empty)
-        ]
-    answers = inquirer.prompt(questions)
-    return answers[label]
+    try:
+        if validate is False:
+            questions = [
+            inquirer.Text(label, message=label)
+            ]
+        else:
+            questions = [
+            inquirer.Text(label, message=label, validate=validate_non_empty)
+            ]
+        answers = inquirer.prompt(questions)
+        return answers[label]
+    except:
+        show_menu()
 
 def get_selection(options, question, default_idx = 0):
     import inquirer
-    questions = [
-    inquirer.List('answer',
-                    message=question,
-                    choices=options,
-                    default=options[default_idx]
-                ),
-    ]
-    answers = inquirer.prompt(questions)
-    if answers is None:
-        # print("Cancelled.")
-        exit(0)
-        
-    return answers['answer']
+    try:
+        questions = [
+        inquirer.List('answer',
+                        message=question,
+                        choices=options,
+                        default=options[default_idx]
+                    ),
+        ]
+        answers = inquirer.prompt(questions)
+        if answers is None:
+            # print("Cancelled.")
+            show_menu()
+            
+        return answers['answer']
+    except:
+        if not __in_main_menu:
+            show_menu()
 
 def init_db():
     # Connect to the database (or create it if it doesn't exist)
@@ -227,6 +235,8 @@ def delete_record(voc):
     conn.close()
         
 def edit_record(idx, record, total_num):
+    global __in_main_menu
+    __in_main_menu = False
     clear_console()
     print("Edit now")
     print("================================")
@@ -267,6 +277,8 @@ def evaluate_translation(chinese, english, language="English"):
 
 def show_record(idx, record, total_num, from_search = False, default_option_idx = 0):
     global DEFAULT_VIEW_OPTION_IDX
+    global __in_main_menu
+    __in_main_menu = False
     print("================================")
     if not from_search:
         print(f"{idx + 1} / {total_num}")
@@ -415,6 +427,8 @@ def start_general_practice(review_language='English'):
         general_practice(num_questions=-1)
 
 def general_practice(num_questions=-1, review_language='English'):
+    global __in_main_menu
+    __in_main_menu = False
     clear_console()
     all_records = get_all_records()
     question_list = []
@@ -454,6 +468,8 @@ def general_practice(num_questions=-1, review_language='English'):
     show_menu()
     
 def practice_phase(voc, examples, translations, review_language='English'):
+    global __in_main_menu
+    __in_main_menu = False
     clear_console()
     print("Translate the following sentence into English using phase " + success_text(voc))
     for idx, (example, translation) in enumerate(zip(examples, translations)):
@@ -471,6 +487,8 @@ def practice_phase(voc, examples, translations, review_language='English'):
         return
 
 def show_output_json(voc, data_json, pause=True):
+    global __in_main_menu
+    __in_main_menu = False
     phase = voc
     explanation = data_json['explanation']
     examples = data_json['example sentences']
@@ -486,6 +504,8 @@ def show_output_json(voc, data_json, pause=True):
 
 def show_menu(show_title=True):
     global DEFAULT_VIEW_OPTION_IDX
+    global __in_main_menu
+    __in_main_menu = True
     clear_console()
     print(success_text(title()))
     read_chatgpt_key()
