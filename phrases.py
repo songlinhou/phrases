@@ -379,8 +379,79 @@ def get_all_voc(clear=True, order_option=ListOrderOptions.EARLIST_FIRST):
 
     # Close the connection
     conn.close()
-    
 
+def get_all_records():
+    # Connect to the database
+    conn = sqlite3.connect(DB_NAME)
+
+    # Create a cursor object
+    cursor = conn.cursor()
+
+    # Define the SELECT statement to retrieve all columns from all rows
+    select_all_sql = f"""
+    SELECT * FROM {TABLE_NAME}
+    """
+
+    # Execute the SELECT statement
+    cursor.execute(select_all_sql)
+
+    # Fetch all records at once using fetchall()
+    all_records = cursor.fetchall()
+    return all_records
+
+def start_general_practice(review_language='English'):
+    print(success_text("Vocabulary Size: ") + str(len(get_all_records())))
+    options = ["Warm Up (5 - 10 exercises)", "Standard (11 - 20 exercises)", "Advanced (21 - 40 exercises)", "Challenge (41 - 80 exercises)", "All (all exercises)"]
+    idx = options.index(get_selection(options, "How many exercises?"))
+    if idx == 0:
+        general_practice(num_questions=random.randint(5,10), review_language=review_language)
+    elif idx == 1:
+        general_practice(num_questions=random.randint(11,20), review_language=review_language)
+    elif idx == 2:
+        general_practice(num_questions=random.randint(21,40), review_language=review_language)
+    elif idx == 3:
+        general_practice(num_questions=random.randint(41,80), review_language=review_language)
+    elif idx == 4:
+        general_practice(num_questions=-1)
+
+def general_practice(num_questions=-1, review_language='English'):
+    clear_console()
+    all_records = get_all_records()
+    question_list = []
+    
+    for id, record in enumerate(all_records):
+        phase = json.loads(record[0])
+        explanation = json.loads(record[1])
+        examples = json.loads(record[2])
+        translates = json.loads(record[3])
+        note = json.loads(record[4]) if record[4] is not None else ""
+        for translate, example in zip(translates, examples):
+            item = (phase, explanation, translate, example, note)
+            question_list.append(item)
+            
+    random.shuffle(question_list)
+    if num_questions > 0:
+        num_questions = min(num_questions, len(question_list))
+        question_list = question_list[:num_questions]
+    
+    for id, question in enumerate(question_list):
+        (phase, explanation, translate, example, note) = question
+        print(f"\n{id + 1}/{len(question_list)}\t" + success_text(translate))
+        user_trans = get_input("Translate")
+        print("-" * 10)
+        print(success_text("Answer: ") + example)
+        print()
+        print(success_text('Phase: ') + phase)
+        print(success_text('Explanation: ') + explanation)
+        if note.strip() != "":
+            print(success_text('Note: ') + note)
+        evaluation = evaluate_translation(translate, user_trans, language=review_language)
+        print(success_text("Evaluation: ") + evaluation)
+        
+    print(success_text("Test completed!"))
+    print('\n' + success_text("<Press ENTER key to continue>"))
+    input()
+    show_menu()
     
 def practice_phase(voc, examples, translations, review_language='English'):
     clear_console()
@@ -388,7 +459,7 @@ def practice_phase(voc, examples, translations, review_language='English'):
     for idx, (example, translation) in enumerate(zip(examples, translations)):
         print("\n" + success_text(translation))
         user_trans = get_input("Translate:")
-        print(example)
+        print(f"Answer: {example}")
         evaluation = evaluate_translation(translation, user_trans, language=review_language)
         print(success_text("Evaluation: ") + evaluation)
     print("\n" + "=" * 10)
@@ -419,7 +490,7 @@ def show_menu(show_title=True):
     print(success_text(title()))
     read_chatgpt_key()
     DEFAULT_VIEW_OPTION_IDX = 0
-    options = ["Lookup", "Vocabulary Book", "Export to CSV","Exit"]
+    options = ["Lookup", "Vocabulary Book", "General Test", "Export to CSV","Exit"]
     answer = get_selection(options, "What do you want to do?")
     idx = options.index(answer)
     if idx == 0:
@@ -443,10 +514,12 @@ def show_menu(show_title=True):
         clear_console()
         get_all_voc(order_option=order)
     elif idx == 2:
-        export_to_csv()
+        start_general_practice()
     elif idx == 3:
+        export_to_csv()
+    elif idx == 4:
         exit(0)
-        
+
 def update_database():
     add_column_to_table(TABLE_NAME, 'notes', 'TEXT')
     
