@@ -29,15 +29,13 @@ Please be aware you need to provide your own ChatGPT API key. For more informati
 请注意，您需要提供自己的 ChatGPT API 密钥。如需更多信息，请访问 https://help.socialintents.com/article/188-how-to-find-your-openai-api-key-for-chatgpt
 
 ### How to Use 使用说明
-Clone this repo and use the following command in your terminal (only run it once)
-克隆这个库并在终端中使用以下命令(只需要执行一次)
+Use the following command in your terminal (only run it once)
+在终端中使用以下命令(只需要执行一次)
 
 ```
-git clone https://github.com/songlinhou/phrases.git
-chmod +x phrases/phrases.py
-sudo cp phrases/phrases.py /usr/local/bin/phrases
-rm -rf phrases
+wget https://raw.githubusercontent.com/songlinhou/phrases/main/phrases_wrapper.py && python3 phrases_wrapper.py && rm -f phrases_wrapper.py
 ```
+
 To launch the app, use
 使用时, 输入以下命令
 ```
