@@ -17,7 +17,8 @@ TABLE_NAME = "vocabulary"
 KEY = None
 CONFIG_DIR = "phrases_configs"
 DEFAULT_VIEW_OPTION_IDX = 0
-SERVER_ADDR = "http://146.190.74.182:5000"
+REMOTE_CONFIG_URL = 'https://raw.githubusercontent.com/songlinhou/phrases/main/configs/general.json'
+SERVER_ADDR = None
 
 
 __cloud_user_email = None
@@ -857,9 +858,12 @@ def install_dependencies(libs):
         print(error_text("Please make sure python3 and pip are installed in your system."))
 
 def change_version():
+    global SERVER_ADDR
     clear_console()
     import requests
     try:
+        remote_config = requests.get(REMOTE_CONFIG_URL).json()
+        SERVER_ADDR = remote_config['server_addr']
         if requests.get(SERVER_ADDR).ok:
             print("Server detected!")
             options = ["Cloud (Recommended)", "Local"]
