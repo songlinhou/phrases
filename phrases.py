@@ -9,21 +9,27 @@ import time
 import csv
 import datetime
 import random
+import base64
 
-VERSION = "0.3"
+VERSION = "0.4"
 DB_NAME = "vocabulary.db"
 TABLE_NAME = "vocabulary"
 KEY = None
 CONFIG_DIR = "phrases_configs"
 DEFAULT_VIEW_OPTION_IDX = 0
+SERVER_ADDR = "http://146.190.74.182:5000"
 
+
+__cloud_user_email = None
+__cloud_username = None
+__cloud_password = None
 __in_main_menu = True
 
 example = json.dumps({"explanation":"THE EXPLAINATION GOES HERE", "example sentences":["sentence 1", "sentence 2", "sentence 3"], "translations":["翻译1", "翻译2", "翻译3"]})
 
 config_path = os.path.join(str(Path.home()), CONFIG_DIR)
 os.makedirs(config_path, exist_ok=True)
-DB_NAME = os.path.join(config_path, DB_NAME)
+DEFAULT_DB_NAME = os.path.join(config_path, DB_NAME)
 
 def title():
     _title = f"""
@@ -35,6 +41,8 @@ def title():
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝
 -----------------------------------------VERSION: {VERSION}----
     """
+    if __cloud_username:
+        _title += f"\nLogged in as {__cloud_username}"
     return _title
 
 class ListOrderOptions:
@@ -64,14 +72,34 @@ def clear_console():
         os.system('clear')        
 
 def chat_with_gpt(prompt):
-    import openai
-    openai.api_key = KEY
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",  # You can choose different engines like "gpt-3.5-turbo" or "davinci"
-        messages=[{'role': 'user', 'content': prompt}]
-    )
+    if KEY is not None:
+        import openai
+        openai.api_key = KEY
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # You can choose different engines like "gpt-3.5-turbo" or "davinci"
+            messages=[{'role': 'user', 'content': prompt}]
+        )
 
-    return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
+    else:
+        import requests
+        url = f"{SERVER_ADDR}/chat_with_gpt"
+        resp = requests.post(url, json={
+            'prompt': prompt,
+            'email': __cloud_user_email,
+            'password': __cloud_password
+        })
+        if resp.ok:
+            data = resp.json()
+            success = data['success']
+            if success:
+                return data['output']
+            else:
+                print(error_text(data['message']))
+                return None
+        else:
+            print(error_text("Unable to use Lookup function."))
+            return None
 
 def validate_non_empty(_, answer):
     import inquirer
@@ -80,18 +108,37 @@ def validate_non_empty(_, answer):
         return False
     else:
         return True
+def validate_password(_, answer):
+    import inquirer
+    if not answer.strip():
+        inquirer.errors.ValidationError("Empty password", reason="Cannot be empty")
+        return False
+    if len(answer.strip()) < 6:
+        inquirer.errors.ValidationError("Password length is at least 6", reason="Password too short")
+        return False
+    return True
 
-def get_input(label="Search", validate=True):
+def get_input(label="Search", validate=True, password=False):
     import inquirer
     try:
         if validate is False:
-            questions = [
-            inquirer.Text(label, message=label)
-            ]
+            if not password:
+                questions = [
+                inquirer.Text(label, message=label)
+                ]
+            else:
+                questions = [
+                inquirer.Password(label, message=label)
+                ]
         else:
-            questions = [
-            inquirer.Text(label, message=label, validate=validate_non_empty)
-            ]
+            if not password:
+                questions = [
+                inquirer.Text(label, message=label, validate=validate_non_empty)
+                ]
+            else:
+                questions = [
+                inquirer.Password(label, message=label, validate=validate_password)
+                ]
         answers = inquirer.prompt(questions)
         return answers[label]
     except:
@@ -117,12 +164,19 @@ def get_selection(options, question, default_idx = 0):
         if not __in_main_menu:
             show_menu()
         
-            
+def get_db_conn():
+    if __cloud_user_email is None:
+        # Connect to the database (or create it if it doesn't exist)
+        conn = sqlite3.connect(DEFAULT_DB_NAME)
+    else:
+        user_dir = os.path.join(config_path, 'users', __cloud_user_email)
+        os.makedirs(user_dir, exist_ok=True)
+        db_name = os.path.join(user_dir, DB_NAME)
+        conn = sqlite3.connect(db_name)
+    return conn
 
 def init_db():
-    # Connect to the database (or create it if it doesn't exist)
-    conn = sqlite3.connect(DB_NAME)
-
+    conn = get_db_conn()
     # Create a cursor object
     cursor = conn.cursor()
 
@@ -156,7 +210,7 @@ def find_existing_record(voc):
     phase = json.dumps(voc)
     
     # Connect to the database
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_conn()
 
     # Create a cursor object
     cursor = conn.cursor()
@@ -183,7 +237,7 @@ def get_results(voc):
         output_json = json.loads(answer)
         return output_json
 
-def insert_record(voc, output_json):
+def insert_record(voc, output_json, note=None, skip_backup=True, skip_message=False):
     if output_json is None:
         return
     try:
@@ -191,21 +245,31 @@ def insert_record(voc, output_json):
         explanation = json.dumps(output_json['explanation'])
         example = json.dumps(output_json['example sentences'])
         translation = json.dumps(output_json['translations'])
-
+        
         # Connect to the database
-        conn = sqlite3.connect(DB_NAME)
+        conn = get_db_conn()
 
         # Create a cursor object
         cursor = conn.cursor()
 
         # Define the INSERT statement with placeholders for data
-        insert_sql = f"""
-        INSERT INTO vocabulary (phases, explanations, examples, translations)
-        VALUES (?, ?, ?, ?)
-        """
+        if note is None:
+            insert_sql = f"""
+            INSERT INTO vocabulary (phases, explanations, examples, translations)
+            VALUES (?, ?, ?, ?)
+            """
 
-        # Insert data as a tuple
-        data_tuple = (phase, explanation, example, translation)
+            # Insert data as a tuple
+            data_tuple = (phase, explanation, example, translation)
+        
+        else:
+            insert_sql = f"""
+            INSERT INTO vocabulary (phases, explanations, examples, translations, notes)
+            VALUES (?, ?, ?, ?, ?)
+            """
+            note = json.dumps(note)
+            # Insert data as a tuple
+            data_tuple = (phase, explanation, example, translation, note)
 
         # Execute the INSERT statement with data tuple
         cursor.execute(insert_sql, data_tuple)
@@ -215,22 +279,44 @@ def insert_record(voc, output_json):
 
         # Close the connection
         conn.close()
-
-        print(success_text(f"Record inserted successfully: {voc}"))
+        if not skip_message:
+            print(success_text(f"Record inserted successfully: {voc}"))
     except sqlite3.Error as e:
         print(error_text("Error inserting record:" + str(e)))
+
+    if not skip_backup:
+        backup_vocabulary()
         
 def update_record_note(voc, note):
-    conn = sqlite3.connect(DB_NAME)
+    import requests
+    conn = get_db_conn()
     cursor = conn.cursor()
     condition = f"phases = '{voc}'"
     update_query = f"UPDATE {TABLE_NAME} SET notes = ? WHERE {condition}"
     cursor.execute(update_query, (json.dumps(note),))
     conn.commit()
     conn.close()
+
+    if __cloud_user_email is not None:
+        resp = requests.post(f"{SERVER_ADDR}/edit_note", json={
+            'email': __cloud_user_email,
+            'phrase': json.loads(voc),
+            'note': note
+        })
+        if resp.ok:
+            data = resp.json()
+            success = data['success']
+            if not success:
+                print(error_text("Unable to communicate with server: " + data['message']))
+                time.sleep(2)
+        else:
+            print(error_text("Server connection failed ..."))
+            time.sleep(2)
+
     
 def delete_record(voc):
-    conn = sqlite3.connect(DB_NAME)
+    import requests
+    conn = get_db_conn()
     cursor = conn.cursor()
     # condition = f"phases = '{voc}'"
     delete_query = f"DELETE FROM {TABLE_NAME} WHERE phases = ?"
@@ -238,6 +324,21 @@ def delete_record(voc):
     cursor.execute(delete_query, (voc, ))
     conn.commit()
     conn.close()
+
+    if __cloud_user_email is not None:
+        resp = requests.post(f"{SERVER_ADDR}/delete_from_server", json={
+            'email': __cloud_user_email,
+            'phrase': json.loads(voc)
+        })
+        if resp.ok:
+            data = resp.json()
+            success = data['success']
+            if not success:
+                print(error_text("Unable to delete from server: " + data['message']))
+                time.sleep(2)
+        else:
+            print(error_text("Server connection failed ..."))
+            time.sleep(2)
         
 def edit_record(idx, record, total_num):
     global __in_main_menu
@@ -273,10 +374,13 @@ def edit_record(idx, record, total_num):
         print(success_text(f"Record of {phase} is deleted... Back in 3 seconds ..."))
         time.sleep(3)
     
-def evaluate_translation(chinese, english, language="English"):
+def evaluate_translation(voc, chinese, english, language="English"):
     if chinese.strip() == "" or english.strip() == "":
         return ""
-    prompt = f"Given the sentence \"{chinese}\" and the translation \"{english}\", evaluate the translation, correct any mistakes and recommend any improvements in {language}"
+    prompt = f"This is an sentence making exercise using \"{voc}\"." 
+    prompt += f"Given the sentence \"{chinese}\" and the translation \"{english}\", " 
+    prompt += f"evaluate the translation, correct any mistakes and recommend any improvements in {language}."
+    prompt += f"The evaluation must include \"{voc}\" in it."
     output = chat_with_gpt(prompt)
     return output
 
@@ -324,7 +428,7 @@ def show_record(idx, record, total_num, from_search = False, default_option_idx 
 
     
 def add_column_to_table(table_name, column_name, data_type):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_conn()
     cursor = conn.cursor()
 
     try:
@@ -339,7 +443,7 @@ def add_column_to_table(table_name, column_name, data_type):
         
 def get_all_voc(clear=True, order_option=ListOrderOptions.EARLIST_FIRST):
     # Connect to the database
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_conn()
 
     # Create a cursor object
     cursor = conn.cursor()
@@ -383,7 +487,12 @@ def get_all_voc(clear=True, order_option=ListOrderOptions.EARLIST_FIRST):
                     random.shuffle(all_records)
                 elif order_option == ListOrderOptions.LATEST_FIRST:
                     all_records = list(reversed(all_records))
-                    
+                
+                if len(all_records) == 0:
+                    clear_console()
+                    show_menu()
+                    return 
+                
                 record = all_records[idx]
                 clear_console()
                 
@@ -396,13 +505,15 @@ def get_all_voc(clear=True, order_option=ListOrderOptions.EARLIST_FIRST):
             record = all_records[idx]
     else:
         print(error_text("No records found in the table."))
+        wait_for_enter_key()
+        show_menu()
 
     # Close the connection
     conn.close()
 
 def get_all_records():
     # Connect to the database
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_conn()
 
     # Create a cursor object
     cursor = conn.cursor()
@@ -457,17 +568,17 @@ def general_practice(num_questions=-1, review_language='English'):
         question_list = question_list[:num_questions]
     
     for id, question in enumerate(question_list):
-        (phase, explanation, translate, example, note) = question
+        (phrase, explanation, translate, example, note) = question
         print(f"\n{id + 1}/{len(question_list)}\t" + success_text(translate))
         user_trans = get_input("Translate")
         print("-" * 10)
         print(success_text("Answer: ") + example)
         print()
-        print(success_text('Phase: ') + phase)
+        print(success_text('Phrase: ') + phrase)
         print(success_text('Explanation: ') + explanation)
         if note.strip() != "":
             print(success_text('Note: ') + note)
-        evaluation = evaluate_translation(translate, user_trans, language=review_language)
+        evaluation = evaluate_translation(phrase, translate, user_trans, language=review_language)
         print(success_text("Evaluation: ") + evaluation)
         
     print(success_text("Test completed!"))
@@ -484,7 +595,7 @@ def practice_phase(voc, examples, translations, review_language='English'):
         print("\n" + success_text(translation))
         user_trans = get_input("Translate:")
         print(f"Answer: {example}")
-        evaluation = evaluate_translation(translation, user_trans, language=review_language)
+        evaluation = evaluate_translation(voc, translation, user_trans, language=review_language)
         print(success_text("Evaluation: ") + evaluation)
     print("\n" + "=" * 10)
     options = ['Try again', 'Done']
@@ -514,9 +625,15 @@ def show_menu(show_title=True):
     global DEFAULT_VIEW_OPTION_IDX
     global __in_main_menu
     __in_main_menu = True
+    init_db()
     clear_console()
-    print(success_text(title()))
-    read_chatgpt_key()
+    if __cloud_user_email is None:
+        print(success_text(title()))
+        print("To use local version, please provide your own ChatGPT API Key.")
+        read_chatgpt_key()
+    else:
+        print(warn_text(title()))
+    
     
     DEFAULT_VIEW_OPTION_IDX = 0
     options = ["Lookup", "Vocabulary Book", "General Test", "Export to CSV","Exit"]
@@ -531,7 +648,7 @@ def show_menu(show_title=True):
                 output_json = get_results(voc)
                 if output_json is not None:
                     show_output_json(voc, output_json, pause=False)
-                    insert_record(voc, output_json)
+                    insert_record(voc, output_json, skip_backup=False)
             except Exception as e:
                 print(error_text("Failed to get results:") + str(e))
         
@@ -543,10 +660,13 @@ def show_menu(show_title=True):
         options = [ListOrderOptions.RANDOM, ListOrderOptions.EARLIST_FIRST, ListOrderOptions.LATEST_FIRST]
         order = get_selection(options, "Select the browsing order")
         clear_console()
+        backup_vocabulary()
         get_all_voc(order_option=order)
     elif idx == 2:
+        backup_vocabulary()
         start_general_practice()
     elif idx == 3:
+        backup_vocabulary()
         export_to_csv()
     elif idx == 4:
         exit(0)
@@ -582,7 +702,7 @@ def save_local_config(key, value):
         
 def export_to_csv():
     # Connect to the database
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_conn()
 
     # Create a cursor object
     cursor = conn.cursor()
@@ -614,11 +734,94 @@ def export_to_csv():
     time.sleep(2)
     clear_console()
     show_menu()
+
+def vocabulary_to_json():
+    # Connect to the database
+    conn = get_db_conn()
+
+    # Create a cursor object
+    cursor = conn.cursor()
+
+    # Define the SELECT statement to retrieve all columns from all rows
+    select_all_sql = f"""
+    SELECT * FROM {TABLE_NAME}
+    """
+
+    # Execute the SELECT statement
+    cursor.execute(select_all_sql)
+
+    # Fetch all records at once using fetchall()
+    all_records = cursor.fetchall()
+    
+    # writer.writerow(['Phases', 'Explanations', 'Examples', 'Translations', 'Notes'])
+    json_data = []
+    for record in all_records:
+        item = {}
+        item['phrase'] = json.loads(record[0])
+        item['explanation'] = json.loads(record[1])
+        item['examples'] = json.loads(record[2])
+        item['translations'] = json.loads(record[3])
+        item['note'] = json.loads(record[4]) if record[4] is not None else ""
+        json_data.append(item)
+            
+    # print(success_text(json.dumps(json_data, indent=2)))
+    # wait_for_enter_key()
+    # clear_console()
+    # show_menu()
+    return json_data
+
+def backup_vocabulary():
+    import requests
+    from tqdm.auto import tqdm
+    if __cloud_user_email is None:
+        return
+    try:
+        voc_data = vocabulary_to_json()
+        latest_voc = requests.post(f"{SERVER_ADDR}/backup_voc", json={
+            'email': __cloud_user_email,
+            'password': __cloud_password,
+            'local_voc': voc_data
+        })
+        resp = latest_voc.json()
+        if resp['success']:
+            remote_voc = resp['voc']
+            local_vocabs = [s['phrase'] for s in voc_data]
+            print(success_text("Syncronizing local data ..."))
+            for remote_vocab in tqdm(remote_voc):
+                phrase = remote_vocab['phrase']
+                if phrase not in local_vocabs:
+                    record_json = {
+                        'explanation': remote_vocab['explanation'],
+                        'example sentences': remote_vocab['examples'],
+                        'translations': remote_vocab['translations']
+                    }
+                    note = remote_vocab['note'] if remote_vocab['note'].strip() != '' else None
+                    insert_record(phrase, record_json, note, skip_backup=True, skip_message=True)
+            print(success_text("vocabulary is backed up successfully"))
+        else:
+            print(error_text("Failed to backup vocabulary"))
+
+    except Exception as e:
+        print(error_text(e))
+
+def encode_binary_file_to_base64_string(file_path):
+    # Read the binary file
+    with open(file_path, 'rb') as binary_file:
+        binary_data = binary_file.read()
+
+    # Encode the binary data to a Base64 string
+    base64_encoded_data = base64.b64encode(binary_data)
+
+    # Convert bytes to string
+    base64_string = base64_encoded_data.decode('utf-8')
+    
+    return base64_string
         
         
 def get_config_value(key):
     general_config = get_local_config()
     return general_config.get(key, None)
+
 
 def read_chatgpt_key():
     global KEY
@@ -645,13 +848,160 @@ def read_chatgpt_key():
     KEY = chatgpt_key
         
 def install_dependencies(libs):
-    py_bin = subprocess.check_output("which python3", shell=True).decode().strip()
-    for lib in libs:
-        ret = subprocess.call(f"{py_bin} -m pip install -q {lib}", shell=True)
-        assert ret == 0, error_text(f"Cannot install library {lib}")
+    try:
+        py_bin = subprocess.check_output("which python3", shell=True).decode().strip()
+        for lib in libs:
+            ret = subprocess.call(f"{py_bin} -m pip install -q {lib}", shell=True)
+            assert ret == 0, error_text(f"Cannot install library {lib}")
+    except:
+        print(error_text("Please make sure python3 and pip are installed in your system."))
+
+def change_version():
+    clear_console()
+    import requests
+    try:
+        if requests.get(SERVER_ADDR).ok:
+            print("Server detected!")
+            options = ["Cloud (Recommended)", "Local"]
+            idx = options.index(get_selection(options, "Select your preferred version (Can be switched anytime in settings.)"))
+        else:
+            idx = 1
+    except:
+        idx = 1
+    if idx == 0:
+        # cloud
+        email = get_input("Email", validate=True)
+        is_new = is_user_new(email)
+        if is_new:
+            username = get_input("Username", validate=True)
+            password = get_input("Password", validate=True, password=True)
+            print(email, username, password)
+            create_user(email, username, password)
+        else:
+            password = get_input("Password", validate=True, password=True)
+            login_user(email, password)
+    else:
+        # read_chatgpt_key()
+        show_menu()
+        pass
+
+def wait_for_enter_key():
+    print('\n' + success_text("<Press ENTER key to continue>"))
+    input()
+
+def is_user_new(email):
+    import requests
+    url = f"{SERVER_ADDR}/is_user_new"
+    resp = requests.post(url, json={
+        "email": email
+    })
+    if resp.ok:
+        resp_data = resp.json()
+        success = resp_data['success']
+        if success:
+            is_new = resp_data['is_new']
+            if is_new:
+                print(success_text(f"Creating a new user..."))
+                return True
+            else:
+                username = resp_data['username']
+                print(success_text(f"Login as {username}"))
+                return False
+        else:
+            message = resp_data['message']
+            # print(resp_data)
+            print(error_text(f"Failed to verify email: {message}"))
+            wait_for_enter_key()
+            change_version()
+            return False
+    else:
+        print(error_text(f"Connection failed... Please try again later ..."))
+        wait_for_enter_key()
+        change_version()
+        return False
+    
+def login_user(email, password):
+    global __cloud_user_email
+    global __cloud_username
+    global __cloud_password
+    global KEY
+    import requests
+    url = f"{SERVER_ADDR}/login_user"
+    resp = requests.post(url, json={
+        "email": email,
+        "password": password
+    })
+    if resp.ok:
+        resp_data = resp.json()
+        success = resp_data['success']
+        if success:
+            user_data = resp_data['data']
+            username = user_data['Username']
+            print(success_text(f"Welcome back, {username}!"))
+            __cloud_user_email = email
+            __cloud_username = username
+            __cloud_password = password
+            _key = user_data['ChatGPT Key'].strip()
+            if _key != "":
+                KEY = _key
+
+            # fetch latest vocabs from server
+            # TODO
+            wait_for_enter_key()
+            # vocabulary_to_json()
+            init_db()
+            show_menu()
+        else:
+            message = resp_data['message']
+            print(error_text(f"Login failed:{message}"))
+            wait_for_enter_key()
+            change_version()
+    else:
+        print(error_text(f"Login failed. Please try it later ..."))
+        wait_for_enter_key()
+        change_version()
+
+def create_user(email, username, password):
+    global __cloud_user_email
+    global __cloud_username
+    global __cloud_password
+    import requests
+    login_user_addr = f"{SERVER_ADDR}/new_user"
+    if password.strip() == '':
+        print(error_text(f"Password cannot be empty"))
+        wait_for_enter_key()
+        change_version()
+    resp = requests.post(login_user_addr, json={
+        "email": email,
+        "username": username,
+        "password": password
+    })
+    if resp.ok:
+        resp_data = resp.json()
+        success = resp_data['success']
+        if success:
+            print(success_text(f"Success! Welcome {username}!"))
+            __cloud_user_email = email
+            __cloud_username = username
+            __cloud_password = password
+            init_db()
+            wait_for_enter_key()
+            show_menu()
+        else:
+            message = resp_data['message']
+            print(error_text(f"Failed to create user:{message}"))
+            wait_for_enter_key()
+            change_version()
+    else:
+        print(error_text(f"Failed to create user. Please try again later."))
+        wait_for_enter_key()
+        change_version()
+
 if __name__ == "__main__":
     try:
-        install_dependencies(['inquirer==2.8.0', 'openai==0.28'])
+        install_dependencies(['inquirer==2.8.0', 'openai==0.28', 'requests', 'tqdm'])
+        init_db()
+        change_version()
         init_db()
         show_menu()
         
